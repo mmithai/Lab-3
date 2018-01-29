@@ -1,0 +1,196 @@
+### If you install to a specific folder, you must load from there too.
+#install.packages("foreign", lib="~/Desktop/Lab31/RLib")
+# install.packages("rgdal")
+# install.packages("maptools")
+# install.packages("scales")
+# install.packages("htmlwidgets")
+
+library(foreign, lib="~/Desktop/Lab31/RLib")
+library(RSocrata)
+library(readr)
+library(sp)
+library(maptools)
+library(rgdal)
+library(leaflet)
+library(scales)
+library(htmlwidgets)
+library(htmltools)
+library(shiny)
+library(shinythemes)
+setwd("~/Desktop/Lab31")
+
+### Download crashes shapefile from CUUATS portal
+#install.packages("downloader")
+library(downloader)
+
+# Create a temporary file to hold the downloaded .zip shapefile
+temp <- tempfile(fileext = ".zip")
+# Download it
+download("http://data.cuuats.org/datasets/cb128e58eb85408f9730d509b637b4c7_0.zip", temp)
+# Unzip it
+unzip(temp, exdir = ".")
+# Read it into R using the rgdal package
+crashes <-  readOGR(dsn = ".", "Pedestrian_Crashes_from_2005_to_2015")
+class(crashes)
+summary(crashes)
+crashes@proj4string
+
+##Now create street centerlines 
+streets <- rgdal::readOGR(dsn = "./Street_Centerlines/Street_Centerlines.shp")
+streets.wgs84 <- spTransform(streets, CRS("+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"))
+plot(streets.wgs84, col="black")
+#View(streets.wgs84)
+
+
+### Now create a subset of the existing SpatialPointsDataFrame that only includes
+### "Daylight"
+crashes.daylight <- crashes[crashes$Light == "Daylight",]
+plot(crashes.daylight, pch=20, col="cadetblue1", add=TRUE)
+
+### Now create a subset of the existing SpatialPointsDataFrame that only includes
+### "other" 
+
+crashes.other <- crashes[crashes$Light != "Daylight",]
+plot(crashes.other, pch=20, col="green", add=TRUE)
+#View(crashes.other)
+
+### Make these two layers clickable (add pop-ups)
+daylight.popup <- paste0("<b>Date of Occurrence: </b>", crashes.daylight$Year, "<br>",
+                       "<b>Injury: </b>", crashes.daylight$Injury,"<br>",
+                       "<b>Fatality: </b>", crashes.daylight$Fatality)
+other.popup <- paste0("<b>Date of Occurrence: </b>", crashes.other$Year, "<br>",
+                       "<b>Injury: </b>", crashes.other$Injury,"<br>",
+                      "<b>Fatality: </b>", crashes.other$Fatality
+                      )
+street.popup <- paste0("<b>Street Name: </b>", streets.wgs84$STREETNAME, "<br>",
+                       "<b>Speed: </b>", streets.wgs84$SPEED
+                       )
+
+
+
+
+
+
+server <- (shinyServer(function(input, output, session) {
+  observeEvent(
+    input$daylight,
+    {if("Light"%in%input$crash){
+      leafletProxy("crashmap") %>%
+        addCircleMarkers( data = crashes.daylight, fillOpacity = 0.5, 
+                          radius = 2,
+                          color = "green",
+                          popup=daylight.popup,
+                          group="Daylight Crashes"
+        ) %>%
+        clearControls()%>%
+        clearMarkers()%>%
+        
+        addProviderTiles("OpenStreetMap.HOT", group = "OpenStreetMap") %>%
+        addProviderTiles("Esri.WorldImagery", group = "ESRI World Imagery") %>%
+        addProviderTiles("CartoDB.Positron", group = "CartoDB") %>%
+        addProviderTiles("Stamen.Toner", group= "Stamen") %>%
+        setView(lng = -88.22357, lat = 40.09622, zoom = 12)
+        
+    }})
+    
+  observeEvent(
+    {if("Other"%in%input$crash){
+      leafletProxy("crashmap") %>%
+        addCircleMarkers(data = crashes.other, fillOpacity = 0.5, 
+                         radius = 2,
+                         color = "salmon",
+                         popup=other.popup,
+                         group="Other Time Crashes"
+        ) %>%
+        
+        clearControls()%>%
+        clearMarkers()%>%
+        
+        addProviderTiles("OpenStreetMap.HOT", group = "OpenStreetMap") %>%
+        addProviderTiles("Esri.WorldImagery", group = "ESRI World Imagery") %>%
+        addProviderTiles("CartoDB.Positron", group = "CartoDB") %>%
+        addProviderTiles("Stamen.Toner", group= "Stamen") %>%
+        setView(lng = -88.22357, lat = 40.09622, zoom = 12)
+    }})
+    
+  output$crashmap <- renderLeaflet({
+    leaflet() %>%
+    addTiles() %>%
+    addProviderTiles("OpenStreetMap.HOT", group = "OpenStreetMap") %>%
+    addProviderTiles("Esri.WorldImagery", group = "ESRI World Imagery") %>%
+    addProviderTiles("CartoDB.Positron", group = "CartoDB") %>%
+    setView(-88.273678, 40.1114631, zoom = 12) %>% 
+    addPolygons(data = streets.wgs84,
+                color= "black",
+                popup=street.popup,
+                weight = 1,
+                group="Streets")  %>% 
+    addCircleMarkers( data = crashes.daylight, fillOpacity = 0.5, 
+                      radius = 2,
+                      color = "green",
+                      popup=daylight.popup,
+                      group="Daylight Crashes"
+    ) %>%
+    addCircleMarkers(data = crashes.other, fillOpacity = 0.5, 
+                     radius = 2,
+                     color = "salmon",
+                     popup=other.popup,
+                     group="Other Time Crashes"
+    ) %>%
+    addLegend('topright',
+              colors= c("salmon", "green", "black"),
+              labels = c("Other","Daylight", "Streets"),
+              opacity = 0.2,
+              title = "Cuuats Crashes") %>%
+    addLayersControl(
+      baseGroups = c("OpenStreetMap", "ESRI World Imagery", "CartoDB"),
+      overlayGroups = c("Daylight Crashes", "Other Time Crashes", "Streets"),
+      options = layersControlOptions(collapsed = TRUE)
+    )})
+
+  
+  }
+  ))
+    
+      
+
+### Make the map interactive
+
+
+
+
+##UI Script
+ui <- navbarPage("Champaign Urbana Mobility Map", theme=shinythemes::shinytheme("superhero"),
+                 
+                 tabPanel("Interactive Map",
+                          sidebarLayout(
+                            sidebarPanel(
+                              ##HERE is the SELECT INPUT STUFF
+                              
+                              checkboxGroupInput("crash", "Select a Time of day",choiceNames =c("Light", "Other"), choiceValues =c("Light"=crashes.daylight, "Other"=crashes.other), selected=NULL,
+                                                 width = 12)),
+                            
+                            
+                            
+                            mainPanel(leafletOutput("crashmap", height= 800, width=1050)))),
+                 
+                 
+                 tabPanel("Addtional Resources",
+                          column(width = 12, 
+                                 h2("Additional Resources"),
+                                 p("Champaign Urbana is home to an extensive transit system. Please follow the highlight link to find CUMTD's website.
+                                   "),
+                                 h3("CUMTD"),
+                                 p("Bus Information", a("Here.", 
+                                                        href="https://www.cumtd.com/maps-and-schedules/"))
+                                 )
+                 ))
+
+
+
+
+
+
+
+
+# End of the script
